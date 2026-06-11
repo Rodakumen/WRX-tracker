@@ -15,7 +15,6 @@ load_dotenv()
 
 def connect_to_db():
     try:
-        # Ingen hardkodede passord her lenger!
         return psycopg2.connect(
             user=os.getenv("DB_USER"),
             password=os.getenv("DB_PASSWORD"),
@@ -95,16 +94,15 @@ def load_data():
         "https://www.finn.no/mobility/search/car?q=subaru+wrx"
     ]
 
-    # STEP 1 & 2: EXTRACT USING RE-ENGINEERED BULK FLYT
+    # Step 1 & 2: Extract
     product_links = get_raw_html_and_links(index_search_urls)
     if not product_links:
         logging.warning("No product links gathered. Exiting pipeline.")
         return
 
-    # Kaller den nye raske bulk-funksjonen
     html_payloads = get_bulk_pages_html(product_links)
 
-    # STEP 3: TRANSFORM
+    # Step 3: Transform
     car_products = process_raw_htmls(html_payloads)
     logging.info(f"Transformation complete. Prepared {len(car_products)} entities.")
 
@@ -112,39 +110,26 @@ def load_data():
     if not connection:
         return
 
-    # Ved å bruke 'with', vil cursor og connection LUKKES automatisk uansett feil!
     try:
         with connection:
             with connection.cursor() as cursor:
 
-                # Tabelloppretting (Uten UNIQUE på image_url!)
                 cursor.execute("""
-                               CREATE TABLE IF NOT EXISTS subaru_prices
-                               (
-                                   id
-                                   SERIAL
-                                   PRIMARY
-                                   KEY,
-                                   url
-                                   TEXT
-                                   UNIQUE,
-                                   image_url
-                                   TEXT,
-                                   title
-                                   VARCHAR
-                               (
-                                   255
-                               ),
-                                   price_eur INT,
-                                   price_nok INT,
-                                   mileage INT,
-                                   year INT,
-                                   power_kw INT,
-                                   power_hp INT,
-                                   engine_size_l FLOAT,
-                                   date_registered TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                                   );
-                               """)
+                    CREATE TABLE IF NOT EXISTS subaru_prices (
+                        id               SERIAL PRIMARY KEY,
+                        url              TEXT UNIQUE,
+                        image_url        TEXT,
+                        title            VARCHAR(255),
+                        price_eur        INT,
+                        price_nok        INT,
+                        mileage          INT,
+                        year             INT,
+                        power_kw         INT,
+                        power_hp         INT,
+                        engine_size_l    FLOAT,
+                        date_registered  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    );
+                """)
 
                 def safe_int(val):
                     if val in (None, ""): return None
@@ -161,7 +146,7 @@ def load_data():
                     nok_val = car.get('Price (kr)') if is_finn else None
                     actual_image_url = car.get("Image_URL") or car.get("Image URL")
                     car["Image_URL"] = actual_image_url
-                
+
                     car_data = (
                         car.get("URL"),
                         car.get("Title"),
@@ -174,15 +159,15 @@ def load_data():
                         safe_int(car.get('Power (Hp)')),
                         float(car.get('Engine Size (L)')) if car.get('Engine Size (L)') not in (None, "") else None
                     )
-                
-                    # Step 1: Check if URL already exists
+
+                    # Step 4: Check if URL already exists
                     cursor.execute("SELECT price_eur, price_nok FROM subaru_prices WHERE url = %s", (car.get("URL"),))
                     existing = cursor.fetchone()
                     is_new = existing is None
                     old_eur = existing[0] if existing else None
                     old_nok = existing[1] if existing else None
-                
-                    # Step 2: Insert or update
+
+                    # Step 5: Insert or update
                     if is_new:
                         cursor.execute("""
                             INSERT INTO subaru_prices (url, title, image_url, price_eur, price_nok, mileage, year, power_kw, power_hp, engine_size_l)
@@ -200,23 +185,23 @@ def load_data():
                               safe_int(car.get('Power (kW)')), safe_int(car.get('Power (Hp)')),
                               float(car.get('Engine Size (L)')) if car.get('Engine Size (L)') not in (None, "") else None,
                               car.get("URL")))
-                
-                    # Step 3: Price change detection (same as before)
+
+                    # Step 6: Detect price changes and send alerts
                     new_price = safe_int(nok_val) if is_finn else safe_int(eur_val)
                     old_price = old_nok if is_finn else old_eur
-                
+
                     if is_new:
-                        logging.info(f"New asset verified. Dispatched alert for: {car.get('Title')}")
+                        logging.info(f"New listing detected: {car.get('Title')}")
                         send_gmail_notification(car, status="NEW")
                     elif old_price is not None and new_price != old_price:
-                        logging.info(f"Price volatility detected for {car.get('Title')}. Old: {old_price} -> New: {new_price}")
+                        logging.info(f"Price change detected for {car.get('Title')}. Old: {old_price} -> New: {new_price}")
                         car["Old Price"] = old_price
                         send_gmail_notification(car, status="PRICE_DROP" if new_price < old_price else "PRICE_RISE")
 
-        logging.info("Pipeline executed successfully. All connections closed contextually.")
+        logging.info("Pipeline executed successfully. All connections closed.")
 
     except (Exception, Error) as error:
-        logging.error(f"Critical pipeline fault inside database operation: {error}")
+        logging.error(f"Critical pipeline fault: {error}")
 
 
 if __name__ == "__main__":
