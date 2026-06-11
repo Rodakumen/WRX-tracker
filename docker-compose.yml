@@ -1,0 +1,17 @@
+version: '3.8'
+
+services:
+  subaru-db:
+    image: postgres:15
+    container_name: wrx_postgres_db
+    environment:
+      POSTGRES_USER: admin_01
+      POSTGRES_PASSWORD: supersecret123
+      POSTGRES_DB: wrx_tracker
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+volumes:
+  postgres_data:
