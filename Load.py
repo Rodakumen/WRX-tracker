@@ -146,24 +146,6 @@ def load_data():
                                    );
                                """)
 
-                insert_query = """
-                               INSERT INTO subaru_prices AS old (url, title, image_url, price_eur, price_nok, mileage, year, power_kw, power_hp, engine_size_l)
-                               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                               ON CONFLICT (url) DO \
-                               UPDATE SET
-                                   title = EXCLUDED.title, \
-                                   image_url = EXCLUDED.image_url, \
-                                   price_eur = EXCLUDED.price_eur, \
-                                   price_nok = EXCLUDED.price_nok, \
-                                   mileage = EXCLUDED.mileage, \
-                                   year = EXCLUDED.year, \
-                                   power_kw = EXCLUDED.power_kw, \
-                                   power_hp = EXCLUDED.power_hp, \
-                                   engine_size_l = EXCLUDED.engine_size_l, \
-                                   date_registered = CURRENT_TIMESTAMP \
-                                   RETURNING (xmax = 0) AS is_new_insert, old.price_eur, old.price_nok;
-                               """
-
                 def safe_int(val):
                     if val in (None, ""): return None
                     try:
@@ -178,9 +160,8 @@ def load_data():
                     eur_val = None if is_finn else car.get('Price (€)')
                     nok_val = car.get('Price (kr)') if is_finn else None
                     actual_image_url = car.get("Image_URL") or car.get("Image URL")
-
                     car["Image_URL"] = actual_image_url
-
+                
                     car_data = (
                         car.get("URL"),
                         car.get("Title"),
@@ -193,22 +174,44 @@ def load_data():
                         safe_int(car.get('Power (Hp)')),
                         float(car.get('Engine Size (L)')) if car.get('Engine Size (L)') not in (None, "") else None
                     )
-
-                    cursor.execute(insert_query, car_data)
-                    row = cursor.fetchone()
-                    is_new, old_eur, old_nok = row[0], row[1], row[2]
-
+                
+                    # Step 1: Check if URL already exists
+                    cursor.execute("SELECT price_eur, price_nok FROM subaru_prices WHERE url = %s", (car.get("URL"),))
+                    existing = cursor.fetchone()
+                    is_new = existing is None
+                    old_eur = existing[0] if existing else None
+                    old_nok = existing[1] if existing else None
+                
+                    # Step 2: Insert or update
+                    if is_new:
+                        cursor.execute("""
+                            INSERT INTO subaru_prices (url, title, image_url, price_eur, price_nok, mileage, year, power_kw, power_hp, engine_size_l)
+                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        """, car_data)
+                    else:
+                        cursor.execute("""
+                            UPDATE subaru_prices SET
+                                title = %s, image_url = %s, price_eur = %s, price_nok = %s,
+                                mileage = %s, year = %s, power_kw = %s, power_hp = %s,
+                                engine_size_l = %s, date_registered = CURRENT_TIMESTAMP
+                            WHERE url = %s
+                        """, (car.get("Title"), actual_image_url, safe_int(eur_val), safe_int(nok_val),
+                              safe_int(car.get('Mileage')), safe_int(car.get('Year')),
+                              safe_int(car.get('Power (kW)')), safe_int(car.get('Power (Hp)')),
+                              float(car.get('Engine Size (L)')) if car.get('Engine Size (L)') not in (None, "") else None,
+                              car.get("URL")))
+                
+                    # Step 3: Price change detection (same as before)
                     new_price = safe_int(nok_val) if is_finn else safe_int(eur_val)
                     old_price = old_nok if is_finn else old_eur
-
+                
                     if is_new:
                         logging.info(f"New asset verified. Dispatched alert for: {car.get('Title')}")
-                        # send_gmail_notification(car, status="NEW")
+                        send_gmail_notification(car, status="NEW")
                     elif old_price is not None and new_price != old_price:
-                        logging.info(
-                            f"Price volatility detected for {car.get('Title')}. Old: {old_price} -> New: {new_price}")
+                        logging.info(f"Price volatility detected for {car.get('Title')}. Old: {old_price} -> New: {new_price}")
                         car["Old Price"] = old_price
-                        # send_gmail_notification(car, status="PRICE_DROP" if new_price < old_price else "PRICE_RISE")
+                        send_gmail_notification(car, status="PRICE_DROP" if new_price < old_price else "PRICE_RISE")
 
         logging.info("Pipeline executed successfully. All connections closed contextually.")
 
