@@ -3,7 +3,6 @@ import logging
 from urllib.parse import urljoin
 from playwright.sync_api import sync_playwright
 
-# Sette opp profesjonell logging til både fil og skjerm
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s [%(levelname)s] %(message)s',
@@ -20,7 +19,7 @@ def get_product_links_auto24(page) -> list:
     try:
         page.wait_for_selector("div.result-row", timeout=5000)
     except Exception:
-        logging.warning("Fant ingen resultat-rader på auto24-siden.")
+        logging.warning("No result rows found on auto24 page.")
         return []
 
     anchors = page.locator("div.result-row a.row-link")
@@ -50,8 +49,6 @@ def get_raw_html_and_links(urls: list) -> list:
             logging.info(f"Extracting list index from {url}")
             try:
                 page.goto(url, wait_until="domcontentloaded", timeout=15000)
-
-                # Siden subaru-søk sjelden har 1000 sider, holder det ofte med et raskt scroll
                 page.evaluate("window.scrollTo(0, document.body.scrollHeight);")
                 time.sleep(1)
 
@@ -67,9 +64,8 @@ def get_raw_html_and_links(urls: list) -> list:
     return all_product_links
 
 
-# GIGANTISK OPPGRADERING: Vi åpner nettleseren EN gang, og looper igjennom alle bilene!
 def get_bulk_pages_html(urls: list) -> list:
-    """ Opens browser once and extracts multiple single car pages efficiently """
+    """Opens browser once and extracts multiple single car pages efficiently."""
     payloads = []
     if not urls:
         return payloads
@@ -102,7 +98,7 @@ def get_bulk_pages_html(urls: list) -> list:
                 result["html"] = page.content()
                 payloads.append(result)
 
-                # Høflig skraping: Vent 0.5 sekunder mellom hver bil så vi ikke dundrer ned serverne deres
+                # Polite scraping: wait 0.5 seconds between each request
                 time.sleep(0.5)
 
             except Exception as e:
@@ -115,13 +111,11 @@ def get_bulk_pages_html(urls: list) -> list:
 
 
 if __name__ == '__main__':
-    # Test URLs for both platforms
     target_urls = [
         "https://www.auto24.ee/kasutatud/nimekiri.php?b=23&bw=1630&ae=3&ssid=274810213&_lv=aa0f254b3019bc215161b6ceda78ec5d",
         "https://www.finn.no/mobility/search/car?registration_class=1&variant=1.810.1368"
     ]
 
-    # Gather everything into a single array
     gathered_links = get_raw_html_and_links(target_urls)
 
     print("\n--- Scraping Summary ---")
